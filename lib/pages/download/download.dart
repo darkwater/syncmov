@@ -3,20 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:storage_space/storage_space.dart';
 import 'package:syncmov/state.dart';
 
-// final cwdProvider = StateProvider<String>((ref) {
-//   return ref.watch(libraryProvider)!.path;
-// });
+import 'folder.dart';
 
-final dirlistProvider = FutureProvider<List<String>>((ref) async {
+final dirlistProvider =
+    FutureProvider.family.autoDispose<List<String>, String>((ref, dir) async {
   final library = ref.watch(libraryProvider);
   final sftp = ref.watch(librarySftpProvider);
-  // final cwd = ref.watch(cwdProvider);
 
   if (library == null || !sftp.hasValue) {
     return [];
   }
 
-  final list = (await sftp.value!.listdir(library.path))
+  final list = (await sftp.value!.listdir(dir))
       .map((e) => e.filename)
       .where((name) => !name.startsWith("."))
       .toList();
@@ -27,7 +25,8 @@ final dirlistProvider = FutureProvider<List<String>>((ref) async {
 });
 
 // get the total size of all files in library.path / dir
-final dirsizeProvider = FutureProvider.family<int, String>((ref, dir) async {
+final dirsizeProvider =
+    FutureProvider.family.autoDispose<int, String>((ref, dir) async {
   final library = ref.watch(libraryProvider);
   final sftp = ref.watch(librarySftpProvider);
 
@@ -35,16 +34,18 @@ final dirsizeProvider = FutureProvider.family<int, String>((ref, dir) async {
     return 0;
   }
 
-  final list = await sftp.value!.listdir("${library.path}/$dir");
+  try {
+    final list = await sftp.value!.listdir(dir);
 
-  int size = 0;
-  for (final item in list) {
-    size += (await sftp.value!.stat("${library.path}/$dir/${item.filename}"))
-            .size ??
-        0;
+    int size = 0;
+    for (final item in list) {
+      size += (await sftp.value!.stat("$dir/${item.filename}")).size ?? 0;
+    }
+
+    return size;
+  } catch (e) {
+    return -1;
   }
-
-  return size;
 });
 
 class DownloadPage extends ConsumerWidget {
@@ -69,7 +70,7 @@ class DownloadPage extends ConsumerWidget {
       body: Column(
         children: [
           Expanded(
-            child: ref.watch(dirlistProvider).when(
+            child: ref.watch(dirlistProvider(library.path)).when(
                   data: (list) => Scrollbar(
                     child: ListView.builder(
                       itemCount: list.length,
@@ -107,9 +108,11 @@ class _Folder extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final library = ref.watch(libraryProvider)!;
+
     return ListTile(
       title: Text(name),
-      subtitle: ref.watch(dirsizeProvider(name)).when(
+      subtitle: ref.watch(dirsizeProvider("${library.path}/$name")).when(
             data: (size) {
               final gb = size / 1024 / 1024 / 1024;
               final nice = gb.toStringAsFixed(1);
@@ -118,7 +121,10 @@ class _Folder extends ConsumerWidget {
             loading: () => const Text("Loading..."),
             error: (error, stack) => const Text("Error"),
           ),
-      onTap: () {},
+      onTap: () => Navigator.push(
+        context,
+        DownloadFolderPage.route(name),
+      ),
     );
   }
 }
